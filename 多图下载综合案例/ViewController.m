@@ -12,10 +12,29 @@
 @interface ViewController ()
 @property (nonatomic,strong) NSArray *apps;
 @property(nonatomic,strong) NSMutableDictionary *images;
+@property(nonatomic ,strong) NSOperationQueue *queue;
+@property(nonatomic ,strong) NSMutableDictionary *operations;
 
 @end
 
 @implementation ViewController
+
+
+-(NSMutableDictionary *)operations
+{
+    if (_operations ==nil) {
+        _operations=[NSMutableDictionary dictionary];
+    }
+    return  _operations;
+}
+
+-(NSOperationQueue *)queue
+{
+    if (_queue==nil) {
+        _queue=[[NSOperationQueue alloc]init];
+    }
+    return _queue;
+}
 
 //懒加载字典
 
@@ -78,7 +97,10 @@
     cell.detailTextLabel.text=appM.download;
     
     
-    //图片先从可变的字典里去取
+    //图片先从可变的字典里去取，如果存在直接用，否则去检查磁盘缓存
+    //如果没有 1.没有下载过
+    //2.重新打开程序，缓存被清空
+    
     
     UIImage *image=[self.images objectForKey:appM.icon];
    
@@ -88,40 +110,67 @@
     }
     else
     {
-        NSURL *url=[NSURL URLWithString:appM.icon];
-        NSData *data=[NSData dataWithContentsOfURL:url];
-        UIImage *image=[UIImage imageWithData:data];
-        cell.imageView.image=image;
-        //图片保存到字典
-        [self.images setObject:image forKey:appM.icon];
-        NSLog(@"%zd-----------",indexPath.row);
+        //获得Libray/caches 文件夹的地址
+        NSString *caches=[NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) lastObject];
+        //获得图片的名称
+        NSString *fileName=[appM.icon lastPathComponent];
+        //拼接图片的全路径
+        NSString *fullPath=[caches stringByAppendingPathComponent:fileName];
+        //取得图片数据
+        NSData *data=[NSData dataWithContentsOfFile:fullPath];
+        if (data) {
+            //直接用
+            UIImage *image=[UIImage imageWithData:data];
+            cell.imageView.image=image;
+            [self.images setObject:image forKey:appM.icon];
+             NSLog(@"%zd-----------",indexPath.row);
+            
+        }else{
+            //先检查该图片是否正在下载，如果是那就什么都不做，否则在添加下载任务
+            
+            NSBlockOperation *download=[self.operations objectForKey:appM.icon];
+            if (download) {
+                
+            }else
+            {
+                download=[NSBlockOperation blockOperationWithBlock:^{
+                    NSURL *url=[NSURL URLWithString:appM.icon];
+                    NSData *data=[NSData dataWithContentsOfURL:url];
+                    UIImage *image=[UIImage imageWithData:data];
+                    //                [NSThread sleepForTimeInterval:5.0];
+                    [[NSOperationQueue mainQueue]addOperationWithBlock:^{
+                        cell.imageView.image=image;
+                        //刷新一行
+                        [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:(UITableViewRowAnimationLeft)];
+                        NSLog(@"----------------------下载%@",[NSThread currentThread]);
+                    }];
+                    
+                    //图片保存到字典
+                    [self.images setObject:image forKey:appM.icon];
+                    
+                    //保存到沙河缓存
+                    [data writeToFile:fullPath atomically:YES];
+                    NSLog(@"----------------------%@",[NSThread currentThread]);
+                }];
+                
+                [self.operations setObject:download forKey:appM.icon];
+                
+                [self.queue addOperation:download];
+            }
+        }
     }
     
-    
-    
-    
-    
-    
-    
-//    NSOperationQueue *queue=[[NSOperationQueue alloc]init];
-//    
-//    NSBlockOperation *downLoad=[NSBlockOperation blockOperationWithBlock:^{
-//        NSURL *url=[NSURL URLWithString:appM.icon];
-//        NSData *data=[NSData dataWithContentsOfURL:url];
-//        UIImage *image=[UIImage imageWithData:data];
-//        NSLog(@"down---------%@",[NSThread currentThread]);
-//        [[NSOperationQueue mainQueue]addOperationWithBlock:^{
-//            cell.imageView.image=image;
-//            NSLog(@"添加主线程---------%@",[NSThread currentThread]);
-//        }];
-//    }];
-//    
-//    [queue addOperation:downLoad];
-//    [cell reloadInputViews];
-    
-    //返回cell
     return cell;
 }
 
+//内存缓存————————》磁盘缓存
+
+/*
+ Documents:连接itunes时 会备份，不允许
+ Libray：
+    Preferen：偏好设置 保存账号
+    caches：缓存文件
+ Tmp：临时路径（随时会被删除）
+ */
 
 @end
